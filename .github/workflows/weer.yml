@@ -8,6 +8,11 @@ on:
     branches: [main]
     paths: ["site/**", "fetch_weather.py", ".github/workflows/weer.yml"]
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 concurrency:
   group: weer
   cancel-in-progress: false
@@ -16,6 +21,9 @@ jobs:
   update:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
 
@@ -30,25 +38,11 @@ jobs:
           KNMI_API_KEY: ${{ secrets.KNMI_API_KEY }}
         run: python fetch_weather.py
 
-      - name: Verbinding met SFTP-server testen
-        env:
-          SERVER: ${{ secrets.FTP_SERVER }}
-        run: |
-          echo "Host: $SERVER"
-          nc -zv -w 10 "$SERVER" 22
+      - name: Site klaarzetten voor GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
 
-      - name: Uploaden naar zoeck.com/weer (SFTP)
-        env:
-          SERVER: ${{ secrets.FTP_SERVER }}
-          USER: ${{ secrets.FTP_USERNAME }}
-          PASS: ${{ secrets.FTP_PASSWORD }}
-          REMOTE_DIR: /www/weer            # map waarin index.html staat
-        run: |
-          sudo apt-get install -y -qq lftp > /dev/null
-          lftp -u "$USER,$PASS" "sftp://$SERVER" -e "
-            set sftp:auto-confirm yes;
-            set net:timeout 20;
-            set net:max-retries 2;
-            set net:reconnect-interval-base 5;
-            mirror -R --verbose site $REMOTE_DIR;
-            bye"
+      - name: Publiceren op GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
