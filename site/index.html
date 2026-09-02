@@ -6,6 +6,12 @@
 <title>Weer — KNMI-waarnemingen en verwachting</title>
 <meta name="description" content="Actuele KNMI-waarnemingen en verwachting per station.">
 <meta name="theme-color" content="#0f1418">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
@@ -271,6 +277,7 @@
 </main>
 
 <script>
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 (async function () {
   const $ = id => document.getElementById(id);
   const TZ = "Europe/Amsterdam";
