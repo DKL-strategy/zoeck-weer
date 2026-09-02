@@ -9,6 +9,7 @@ Env:  KNMI_API_KEY   (verplicht)
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -17,23 +18,27 @@ import requests
 COLLECTION = "10-minute-in-situ-meteorological-observations"
 BASE = f"https://api.dataplatform.knmi.nl/edr/v1/collections/{COLLECTION}"
 OUT = Path(__file__).parent / "site" / "data.json"
-HOURS = 24
+HOURS = 48   # 48 uur reeks: nodig voor "gisteren" op de Details-pagina
 
-# Eerste station is de standaardkeuze in de frontend. Volledige lijst: /locations
-STATIONS = [
-    "0-20000-0-06240",  # Schiphol
-    "0-20000-0-06260",  # De Bilt
-    "0-20000-0-06235",  # De Kooy
-    "0-20000-0-06344",  # Rotterdam
-    "0-20000-0-06280",  # Eelde
-    "0-20000-0-06290",  # Twenthe
-    "0-20000-0-06370",  # Eindhoven
-    "0-20000-0-06310",  # Vlissingen
-    "0-20000-0-06380",  # Maastricht
+# Standaard: alle stations uit /locations binnen Nederland (BES-eilanden uitgesloten).
+# Wil je een vaste lijst, zet dan KNMI_STATIONS (komma-gescheiden WIGOS-ids).
+DEFAULT_STATION = "0-20000-0-06240"  # Schiphol: eerste in de lijst = standaardkeuze
+WORKERS = 4                            # gelijktijdige verzoeken naar KNMI
+
+# Alles wat we per station als laatste waarde bewaren
+LATEST_PARAMS = [
+    "ta", "td", "tb", "tg", "rh", "rh10", "t10", "td10",
+    "ff", "dd", "fx", "gff", "Sx6H",
+    "rg", "pg", "R1H", "R6H", "R12H", "R24H", "pwc", "ww",
+    "pp", "p0", "vv", "zm",
+    "n", "n1", "n2", "n3", "h1", "h2", "h3", "hc", "nc",
+    "ss", "qg", "Q24H",
+    "Tn12", "Tx24", "Tgn12",
+    "tb1", "tb2", "tb3", "tb4", "tb5",
 ]
-
-# Variabelen zoals gedocumenteerd voor deze collectie
-PARAMS = ["ta", "td", "rh", "ff", "dd", "fx", "R1H", "R24H", "pp", "vv", "n", "ss", "qg", "rg"]
+# Alleen deze krijgen een 24-uursreeks (houdt data.json klein)
+SERIES_PARAMS = ["ta", "td", "rh", "ff", "fx", "dd", "rg", "R1H", "pp", "qg", "n"]
+PARAMS = LATEST_PARAMS
 
 
 def headers():
@@ -56,6 +61,15 @@ def station_index():
         lon, lat = f["geometry"]["coordinates"][:2]
         out[f["id"]] = {"name": f["properties"].get("name", f["id"]), "lat": lat, "lon": lon}
     return out
+
+
+def select_stations(index):
+    env = os.environ.get("KNMI_STATIONS")
+    if env:
+        return [x.strip() for x in env.split(",") if x.strip()]
+    nl = [sid for sid, m in index.items() if m["lat"] and m["lat"] > 45]  # BES-eilanden eruit
+    nl.sort(key=lambda sid: (sid != DEFAULT_STATION, index[sid]["name"]))
+    return nl
 
 
 def parse_coverage(cov):
@@ -107,9 +121,10 @@ def fetch_station(sid):
         else:
             raise
 
-    series = parse_coverage(cov)
-    series = {k: v for k, v in series.items() if k == "t" or k in PARAMS}
-    times = series["t"]
+    full = parse_coverage(cov)
+    full = {k: v for k, v in full.items() if k == "t" or k in PARAMS}
+    times = full["t"]
+    series = full
 
     # laatste tijdstip met een geldige temperatuur (of anders laatste tijdstip)
     latest_idx = len(times) - 1
@@ -124,31 +139,48 @@ def fetch_station(sid):
     temps = [v for v in series.get("ta", []) if v is not None]
     summary = {"tmin": min(temps), "tmax": max(temps)} if temps else {}
 
-    return {"latest_time": latest_time, "latest": latest, "summary": summary, "series": series}
+    slim = {k: v for k, v in series.items() if k == "t" or k in SERIES_PARAMS}
+    return {"latest_time": latest_time, "latest": latest, "summary": summary, "series": slim}
+
+
+def load_previous():
+    """Vorige data.json: lokaal, of anders de gepubliceerde versie op GitHub Pages."""
+    try:
+        if OUT.exists():
+            doc = json.loads(OUT.read_text())
+        elif os.environ.get("PREVIOUS_URL"):
+            doc = requests.get(os.environ["PREVIOUS_URL"], timeout=20).json()
+        else:
+            return {}
+        return {s["id"]: s for s in doc["stations"]}
+    except Exception:
+        return {}
 
 
 def main():
-    previous = {}
-    if OUT.exists():
-        try:
-            previous = {s["id"]: s for s in json.loads(OUT.read_text())["stations"]}
-        except Exception:
-            pass
-
-    ids = os.environ.get("KNMI_STATIONS")
-    ids = [s.strip() for s in ids.split(",")] if ids else STATIONS
+    previous = load_previous()
 
     index = station_index()
-    stations, errors = [], []
-    for sid in ids:
+    ids = select_stations(index)
+
+    def one(sid):
         meta = index.get(sid, {"name": sid, "lat": None, "lon": None})
         try:
-            data = fetch_station(sid)
-            stations.append({"id": sid, **meta, **data, "error": None})
-        except Exception as e:  # station overslaan, vorige data behouden
-            errors.append(f"{sid}: {e}")
-            if sid in previous:
-                stations.append({**previous[sid], "error": str(e)})
+            return sid, {"id": sid, **meta, **fetch_station(sid), "error": None}, None
+        except Exception as e:
+            return sid, None, str(e)
+
+    results = {}
+    errors = []
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        for sid, data, err in pool.map(one, ids):
+            if data:
+                results[sid] = data
+            else:
+                errors.append(f"{sid}: {err}")
+                if sid in previous:  # vorige data behouden
+                    results[sid] = {**previous[sid], "error": err}
+    stations = [results[sid] for sid in ids if sid in results]
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps({
