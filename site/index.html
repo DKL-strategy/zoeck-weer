@@ -130,15 +130,24 @@
   const bewolking = n => n == null ? "–" : n === 0 ? "onbewolkt" : n <= 2 ? "licht bewolkt" : n <= 5 ? "half bewolkt" : n <= 7 ? "zwaar bewolkt" : n === 8 ? "geheel bewolkt" : "niet zichtbaar";
   const zicht = m => m == null ? "–" : m >= 10000 ? "≥ 10 km" : m >= 1000 ? num(m / 1000, 1) + " km" : Math.round(m) + " m";
 
-  let data;
-  try {
-    const r = await fetch("data.json?" + Date.now(), { cache: "no-store" });
-    if (!r.ok) throw new Error("data.json niet gevonden (" + r.status + ")");
-    data = await r.json();
-  } catch (e) {
+  // data.json wordt door de GitHub Action op GitHub Pages gezet; lokale kopie als reserve
+  const DATA_SOURCES = [
+    "https://dkl-strategy.github.io/zoeck-weer/data.json",
+    "data.json",
+  ];
+  let data, lastErr;
+  for (const src of DATA_SOURCES) {
+    try {
+      const r = await fetch(src + "?" + Date.now(), { cache: "no-store" });
+      if (!r.ok) throw new Error(src + " (" + r.status + ")");
+      data = await r.json();
+      break;
+    } catch (e) { lastErr = e; }
+  }
+  if (!data) {
     $("when").textContent = "";
     $("error").hidden = false;
-    $("error").textContent = "De waarnemingen konden niet worden geladen: " + e.message + ". Controleer of data.json naast deze pagina staat en of de GitHub Action draait.";
+    $("error").textContent = "De waarnemingen konden niet worden geladen: " + lastErr.message + ". Controleer of de GitHub Action draait en GitHub Pages aanstaat.";
     return;
   }
 
