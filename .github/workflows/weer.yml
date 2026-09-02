@@ -15,6 +15,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
 
@@ -29,13 +30,25 @@ jobs:
           KNMI_API_KEY: ${{ secrets.KNMI_API_KEY }}
         run: python fetch_weather.py
 
+      - name: Verbinding met SFTP-server testen
+        env:
+          SERVER: ${{ secrets.FTP_SERVER }}
+        run: |
+          echo "Host: $SERVER"
+          nc -zv -w 10 "$SERVER" 22
+
       - name: Uploaden naar zoeck.com/weer (SFTP)
-        uses: wlixcc/SFTP-Deploy-Action@v1.2.6
-        with:
-          server: ${{ secrets.FTP_SERVER }}       # zoeck.com.transurl.nl
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          port: 22
-          local_path: ./site/*
-          remote_path: /www/weer                  # map waarin index.html staat
-          sftp_only: true
+        env:
+          SERVER: ${{ secrets.FTP_SERVER }}
+          USER: ${{ secrets.FTP_USERNAME }}
+          PASS: ${{ secrets.FTP_PASSWORD }}
+          REMOTE_DIR: /www/weer            # map waarin index.html staat
+        run: |
+          sudo apt-get install -y -qq lftp > /dev/null
+          lftp -u "$USER,$PASS" "sftp://$SERVER" -e "
+            set sftp:auto-confirm yes;
+            set net:timeout 20;
+            set net:max-retries 2;
+            set net:reconnect-interval-base 5;
+            mirror -R --verbose site $REMOTE_DIR;
+            bye"
