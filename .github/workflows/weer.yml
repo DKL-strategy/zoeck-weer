@@ -39,6 +39,3 @@ jobs:
           local_path: ./site/*
           remote_path: /www/weer                  # map waarin index.html staat
           sftp_only: true
-```
-
-dit is de code van weer.yml
