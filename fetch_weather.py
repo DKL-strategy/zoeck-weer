@@ -37,7 +37,7 @@ PARAMS = ["ta", "td", "rh", "ff", "dd", "fx", "R1H", "R24H", "pp", "vv", "n", "s
 
 
 def headers():
-    key = os.environ.get("KNMI_API_KEY")
+    key = (os.environ.get("KNMI_API_KEY") or "").strip()
     if not key:
         sys.exit("KNMI_API_KEY ontbreekt")
     return {"Authorization": key}
