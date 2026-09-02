@@ -16,9 +16,9 @@ jobs:
   update:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -29,13 +29,16 @@ jobs:
           KNMI_API_KEY: ${{ secrets.KNMI_API_KEY }}
         run: python fetch_weather.py
 
-      - name: Uploaden naar zoeck.com/weer
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+      - name: Uploaden naar zoeck.com/weer (SFTP)
+        uses: wlixcc/SFTP-Deploy-Action@v1.2.6
         with:
-          server: ${{ secrets.FTP_SERVER }}
+          server: ${{ secrets.FTP_SERVER }}       # zoeck.com.transurl.nl
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
-          protocol: ftps                 # zet op ftp als je host geen FTPS ondersteunt
-          local-dir: ./site/
-          server-dir: /weer/             # pas aan, bv. /public_html/weer/ of /httpdocs/weer/
-          state-name: .ftp-deploy-sync-state.json
+          port: 22
+          local_path: ./site/*
+          remote_path: /www/weer                  # map waarin index.html staat
+          sftp_only: true
+```
+
+dit is de code van weer.yml
