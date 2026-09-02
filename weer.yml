@@ -1,0 +1,41 @@
+name: Weer bijwerken
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # GitHub kan een paar minuten later starten dan gepland
+  workflow_dispatch:         # handmatig starten via Actions-tab
+  push:
+    branches: [main]
+    paths: ["site/**", "fetch_weather.py", ".github/workflows/weer.yml"]
+
+concurrency:
+  group: weer
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Waarnemingen ophalen bij KNMI
+        env:
+          KNMI_API_KEY: ${{ secrets.KNMI_API_KEY }}
+        run: python fetch_weather.py
+
+      - name: Uploaden naar zoeck.com/weer
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps                 # zet op ftp als je host geen FTPS ondersteunt
+          local-dir: ./site/
+          server-dir: /weer/             # pas aan, bv. /public_html/weer/ of /httpdocs/weer/
+          state-name: .ftp-deploy-sync-state.json

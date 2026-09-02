@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weer — KNMI-waarnemingen</title>
+<meta name="description" content="Actuele KNMI-waarnemingen per station, elke 10 minuten bijgewerkt.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #E6ECF1;
+    --paper: #F6F8FA;
+    --ink: #17232C;
+    --muted: #5B6B78;
+    --rule: #C9D3DB;
+    --temp: #B5541D;
+    --rain: #2A6F97;
+    --wind: #4E6E81;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); color: var(--ink); }
+  body {
+    margin: 0;
+    font: 400 16px/1.5 "IBM Plex Sans", system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 920px; margin: 0 auto; padding: 32px 20px 56px; }
+
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+  .station {
+    appearance: none; -webkit-appearance: none;
+    border: 0; background: transparent; color: var(--ink);
+    font-family: inherit; font-weight: 500; font-size: clamp(28px, 5vw, 40px); line-height: 1.1;
+    padding: 0 28px 0 0; margin-left: -2px; cursor: pointer;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'><path d='M3 6l5 5 5-5' fill='none' stroke='%2317232C' stroke-width='1.6'/></svg>");
+    background-repeat: no-repeat; background-position: right 4px center;
+    border-bottom: 1.5px solid var(--ink);
+  }
+  .station:focus-visible { outline: 2px solid var(--rain); outline-offset: 4px; }
+  .when { color: var(--muted); }
+  .stale { color: var(--temp); }
+
+  .hero { margin-top: 28px; position: relative; }
+  .hero svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .now {
+    position: absolute; right: 0; top: 0;
+    text-align: right; line-height: 1;
+  }
+  .now .value { font-weight: 300; font-size: clamp(56px, 11vw, 96px); letter-spacing: -0.02em; color: var(--temp); }
+  .now .range { color: var(--muted); margin-top: 8px; }
+  @media (max-width: 640px) {
+    .now { position: static; text-align: left; margin-bottom: 12px; }
+  }
+
+  .facts {
+    margin: 32px 0 0; padding: 0; list-style: none;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0 32px;
+  }
+  .facts li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--rule); }
+  .facts dt, .facts dd { margin: 0; }
+  .facts .k { color: var(--muted); }
+  .facts .v { text-align: right; white-space: nowrap; }
+  .facts small { color: var(--muted); font-size: 0.85em; margin-left: 6px; }
+
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 28px 40px; margin-top: 40px; }
+  @media (max-width: 640px) { .charts { grid-template-columns: 1fr; } }
+  .chart h2 { font-size: 16px; font-weight: 500; margin: 0 0 8px; }
+  .chart h2 span { color: var(--muted); font-weight: 400; margin-left: 8px; }
+  .chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+
+  .axis { fill: var(--muted); font-size: 11px; }
+  .grid { stroke: var(--rule); stroke-width: 1; }
+
+  footer { margin-top: 48px; color: var(--muted); font-size: 14px; }
+  footer a { color: inherit; }
+  .error { padding: 16px; background: var(--paper); border-left: 3px solid var(--temp); margin-top: 24px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .hero path.line { transition: d .3s; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <select class="station" id="station" aria-label="Kies een weerstation"></select>
+    <div class="when" id="when">Laden…</div>
+  </header>
+
+  <section class="hero" aria-label="Temperatuur afgelopen 24 uur">
+    <div class="now">
+      <div class="value" id="temp">–</div>
+      <div class="range" id="range"></div>
+    </div>
+    <svg id="tempChart" viewBox="0 0 920 260" role="img" aria-label="Temperatuurverloop"></svg>
+  </section>
+
+  <dl class="facts" id="facts"></dl>
+
+  <section class="charts">
+    <div class="chart">
+      <h2>Wind <span>m/s, vlagen gestippeld</span></h2>
+      <svg id="windChart" viewBox="0 0 440 150" role="img" aria-label="Windsnelheid afgelopen 24 uur"></svg>
+    </div>
+    <div class="chart">
+      <h2>Neerslag <span>mm per uur</span></h2>
+      <svg id="rainChart" viewBox="0 0 440 150" role="img" aria-label="Neerslag per uur afgelopen 24 uur"></svg>
+    </div>
+  </section>
+
+  <div class="error" id="error" hidden></div>
+
+  <footer>
+    Bron: <a href="https://dataplatform.knmi.nl/" rel="noopener">KNMI Data Platform</a>, ongevalideerde 10-minutenwaarnemingen.
+    Tijden in Nederlandse tijd.
+  </footer>
+</main>
+
+<script>
+(async function () {
+  const $ = id => document.getElementById(id);
+  const fmtTime = new Intl.DateTimeFormat("nl-NL", { timeZone: "Europe/Amsterdam", hour: "2-digit", minute: "2-digit" });
+  const fmtDay = new Intl.DateTimeFormat("nl-NL", { timeZone: "Europe/Amsterdam", weekday: "long", day: "numeric", month: "long" });
+  const num = (v, d = 1) => v == null || Number.isNaN(v) ? "–" : v.toFixed(d).replace(".", ",");
+  const RICHTING = ["N","NNO","NO","ONO","O","OZO","ZO","ZZO","Z","ZZW","ZW","WZW","W","WNW","NW","NNW"];
+  const BFT = [0.3,1.6,3.4,5.5,8,10.8,13.9,17.2,20.8,24.5,28.5,32.7];
+  const dir = d => d == null ? "–" : d === 0 ? "stil" : RICHTING[Math.round(d / 22.5) % 16];
+  const bft = v => v == null ? "–" : BFT.filter(t => v >= t).length;
+  const bewolking = n => n == null ? "–" : n === 0 ? "onbewolkt" : n <= 2 ? "licht bewolkt" : n <= 5 ? "half bewolkt" : n <= 7 ? "zwaar bewolkt" : n === 8 ? "geheel bewolkt" : "niet zichtbaar";
+  const zicht = m => m == null ? "–" : m >= 10000 ? "≥ 10 km" : m >= 1000 ? num(m / 1000, 1) + " km" : Math.round(m) + " m";
+
+  let data;
+  try {
+    const r = await fetch("data.json?" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("data.json niet gevonden (" + r.status + ")");
+    data = await r.json();
+  } catch (e) {
+    $("when").textContent = "";
+    $("error").hidden = false;
+    $("error").textContent = "De waarnemingen konden niet worden geladen: " + e.message + ". Controleer of data.json naast deze pagina staat en of de GitHub Action draait.";
+    return;
+  }
+
+  const sel = $("station");
+  for (const s of data.stations) {
+    const o = document.createElement("option");
+    o.value = s.id; o.textContent = s.name.replace(/\s+AWS$/, "");
+    sel.appendChild(o);
+  }
+  const fromHash = location.hash.slice(1);
+  sel.value = data.stations.some(s => s.id === fromHash) ? fromHash : data.stations[0].id;
+  sel.addEventListener("change", () => { location.hash = sel.value; render(); });
+  window.addEventListener("hashchange", () => { if (sel.value !== location.hash.slice(1) && data.stations.some(s => s.id === location.hash.slice(1))) { sel.value = location.hash.slice(1); render(); } });
+  render();
+  let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(render, 150); });
+
+  function render() {
+    const s = data.stations.find(x => x.id === sel.value);
+    const t = new Date(s.latest_time);
+    const ageMin = (Date.now() - t) / 60000;
+    $("when").textContent = `waarneming van ${fmtDay.format(t)}, ${fmtTime.format(t)} uur`;
+    $("when").classList.toggle("stale", ageMin > 60);
+    if (ageMin > 60) $("when").textContent += ` (${Math.round(ageMin / 60)} uur oud)`;
+
+    const L = s.latest, S = s.series, sum = s.summary || {};
+    $("temp").textContent = L.ta == null ? "–" : num(L.ta) + "°";
+    $("range").textContent = sum.tmin != null ? `laagste ${num(sum.tmin)}°, hoogste ${num(sum.tmax)}° (24 u)` : "";
+
+    const facts = [
+      ["Wind", L.ff == null ? "–" : `${dir(L.dd)} ${num(L.ff)} m/s`, L.ff == null ? "" : `${bft(L.ff)} Bft`],
+      ["Windstoten", num(L.fx), L.fx == null ? "" : "m/s"],
+      ["Neerslag 1 uur", num(L.R1H), L.R1H == null ? "" : "mm"],
+      ["Neerslag 24 uur", num(L.R24H), L.R24H == null ? "" : "mm"],
+      ["Luchtvochtigheid", L.rh == null ? "–" : Math.round(L.rh) + " %", ""],
+      ["Dauwpunt", L.td == null ? "–" : num(L.td) + "°", ""],
+      ["Luchtdruk", num(L.pp), L.pp == null ? "" : "hPa"],
+      ["Bewolking", bewolking(L.n), ""],
+      ["Zicht", zicht(L.vv), ""],
+      ["Zon (10 min)", L.ss == null ? "–" : Math.round(L.ss) + " min", ""],
+      ["Instraling", L.qg == null ? "–" : Math.round(L.qg), L.qg == null ? "" : "W/m²"],
+    ];
+    $("facts").innerHTML = facts.map(([k, v, u]) =>
+      `<li><dt class="k">${k}</dt><dd class="v">${v}${u ? `<small>${u}</small>` : ""}</dd></li>`).join("");
+
+    const times = S.t.map(x => new Date(x));
+    const narrow = window.innerWidth <= 640;
+    $("tempChart").setAttribute("viewBox", narrow ? "0 0 400 200" : "0 0 920 260");
+    lineChart($("tempChart"), times, [{ v: S.ta, color: "var(--temp)", w: 2.2 }],
+      { pad: narrow ? { l: 30, r: 12, t: 12, b: 26 } : { l: 36, r: 200, t: 56, b: 28 }, unit: "°", endDot: true, axisLeft: true });
+    lineChart($("windChart"), times, [
+      { v: S.fx, color: "var(--wind)", w: 1.2, dash: "3 4" },
+      { v: S.ff, color: "var(--wind)", w: 2 },
+    ], { pad: { l: 8, r: 34, t: 10, b: 24 }, unit: "", zero: true });
+    barChart($("rainChart"), times, S.R1H, { color: "var(--rain)", pad: { l: 8, r: 34, t: 10, b: 24 } });
+
+    $("error").hidden = !s.error;
+    if (s.error) $("error").textContent = "Dit station kon bij de laatste run niet worden bijgewerkt; je ziet oudere gegevens. (" + s.error + ")";
+  }
+
+  // ---- charts -------------------------------------------------------------
+  function frame(svg, times, pad) {
+    const W = svg.viewBox.baseVal.width, H = svg.viewBox.baseVal.height;
+    const x0 = pad.l, x1 = W - pad.r, y0 = pad.t, y1 = H - pad.b;
+    const tMin = times[0].getTime(), tMax = times[times.length - 1].getTime();
+    const x = t => x0 + (t.getTime() - tMin) / (tMax - tMin || 1) * (x1 - x0);
+    // uurlijnen om de 6 uur op hele lokale uren
+    let ticks = "";
+    for (const t of times) {
+      const h = Number(new Intl.DateTimeFormat("nl-NL", { timeZone: "Europe/Amsterdam", hour: "numeric", hour12: false }).format(t)) % 24;
+      if (t.getUTCMinutes() === 0 && h % 6 === 0)
+        ticks += `<line class="grid" x1="${x(t)}" x2="${x(t)}" y1="${y0}" y2="${y1}"/><text class="axis" x="${x(t)}" y="${y1 + 16}" text-anchor="middle">${String(h).padStart(2, "0")}:00</text>`;
+    }
+    return { W, H, x0, x1, y0, y1, x, ticks };
+  }
+
+  function lineChart(svg, times, series, opt) {
+    const f = frame(svg, times, opt.pad);
+    const all = series.flatMap(s => (s.v || []).filter(v => v != null));
+    if (!all.length) { svg.innerHTML = `<text class="axis" x="${f.x0}" y="${f.y0 + 14}">Geen gegevens</text>`; return; }
+    let lo = Math.min(...all), hi = Math.max(...all);
+    if (opt.zero) lo = Math.min(0, lo);
+    if (hi - lo < 2) { hi += 1; lo -= 1; }
+    const y = v => f.y1 - (v - lo) / (hi - lo) * (f.y1 - f.y0);
+    let out = f.ticks;
+    out += `<line class="grid" x1="${f.x0}" x2="${f.x1}" y1="${f.y1}" y2="${f.y1}"/>`;
+    const ax = opt.axisLeft ? f.x0 - 6 : f.x1 + 6, anchor = opt.axisLeft ? "end" : "start";
+    out += `<text class="axis" x="${ax}" y="${y(hi) + 4}" text-anchor="${anchor}">${num(hi, 0)}${opt.unit}</text><text class="axis" x="${ax}" y="${y(lo) + 4}" text-anchor="${anchor}">${num(lo, 0)}${opt.unit}</text>`;
+    for (const s of series) {
+      if (!s.v) continue;
+      let d = "", pen = false, last = null;
+      s.v.forEach((v, i) => {
+        if (v == null) { pen = false; return; }
+        d += (pen ? "L" : "M") + f.x(times[i]).toFixed(1) + " " + y(v).toFixed(1); pen = true; last = [f.x(times[i]), y(v)];
+      });
+      out += `<path class="line" d="${d}" fill="none" stroke="${s.color}" stroke-width="${s.w}" stroke-linejoin="round" stroke-linecap="round" ${s.dash ? `stroke-dasharray="${s.dash}"` : ""}/>`;
+      if (opt.endDot && last) out += `<circle cx="${last[0]}" cy="${last[1]}" r="4.5" fill="${s.color}"/>`;
+    }
+    svg.innerHTML = out;
+  }
+
+  function barChart(svg, times, values, opt) {
+    const f = frame(svg, times, opt.pad);
+    // R1H is een lopende uursom; neem alleen de waarde op hele uren zodat staven niet overlappen
+    const pts = [];
+    times.forEach((t, i) => { if (t.getUTCMinutes() === 0 && values && values[i] != null) pts.push([t, values[i]]); });
+    if (!pts.length) { svg.innerHTML = `<text class="axis" x="${f.x0}" y="${f.y0 + 14}">Geen gegevens</text>`; return; }
+    const hi = Math.max(1, ...pts.map(p => p[1]));
+    const y = v => f.y1 - v / hi * (f.y1 - f.y0);
+    const bw = (f.x1 - f.x0) / 24 * 0.8;
+    let out = f.ticks + `<line class="grid" x1="${f.x0}" x2="${f.x1}" y1="${f.y1}" y2="${f.y1}"/>`;
+    out += `<text class="axis" x="${f.x1 + 6}" y="${f.y0 + 4}">${num(hi, 1)}</text><text class="axis" x="${f.x1 + 6}" y="${f.y1 + 4}">0</text>`;
+    for (const [t, v] of pts) {
+      if (v <= 0) continue;
+      out += `<rect x="${f.x(t) - bw}" y="${y(v)}" width="${bw}" height="${f.y1 - y(v)}" fill="${opt.color}" rx="1"/>`;
+    }
+    const total = pts.reduce((a, p) => a + p[1], 0);
+    out += `<text class="axis" x="${f.x0}" y="${f.y0 + 4}">totaal ${num(total, 1)} mm</text>`;
+    svg.innerHTML = out;
+  }
+})();
+</script>
+</body>
+</html>
