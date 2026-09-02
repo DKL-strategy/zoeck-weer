@@ -58,6 +58,42 @@ def station_index():
     return out
 
 
+def parse_coverage(cov):
+    """Geeft series {"t": [...], param: [...]} terug uit een Coverage of CoverageCollection."""
+    if "coverages" in cov:
+        covs = cov["coverages"]
+    elif "domain" in cov:
+        covs = [cov]
+    else:
+        raise ValueError(f"onverwacht antwoord, sleutels: {list(cov)[:10]}")
+
+    per_param = {}  # param -> {tijd: waarde}
+    for c in covs:
+        tvals = c.get("domain", {}).get("axes", {}).get("t", {}).get("values")
+        if not tvals:
+            continue
+        for p, rng in c.get("ranges", {}).items():
+            vals = rng.get("values", [])
+            if len(vals) != len(tvals):
+                # bv. shape [t, y, x] met y=x=1: uitdunnen naar één waarde per tijdstip
+                if tvals and len(vals) % len(tvals) == 0:
+                    vals = vals[:: len(vals) // len(tvals)]
+                else:
+                    continue
+            d = per_param.setdefault(p, {})
+            for t, v in zip(tvals, vals):
+                if v is not None or t not in d:
+                    d[t] = v
+
+    if not per_param:
+        raise ValueError("geen waarden in antwoord")
+    times = sorted({t for d in per_param.values() for t in d})
+    series = {"t": times}
+    for p, d in per_param.items():
+        series[p] = [d.get(t) for t in times]
+    return series
+
+
 def fetch_station(sid):
     end = datetime.now(timezone.utc).replace(second=0, microsecond=0)
     start = end - timedelta(hours=HOURS)
@@ -71,22 +107,20 @@ def fetch_station(sid):
         else:
             raise
 
-    times = cov["domain"]["axes"]["t"]["values"]
-    series = {"t": times}
-    for p in PARAMS:
-        if p in cov.get("ranges", {}):
-            series[p] = cov["ranges"][p]["values"]
+    series = parse_coverage(cov)
+    series = {k: v for k, v in series.items() if k == "t" or k in PARAMS}
+    times = series["t"]
 
     # laatste tijdstip met een geldige temperatuur (of anders laatste tijdstip)
     latest_idx = len(times) - 1
+    ta = series.get("ta", [None] * len(times))
     for i in range(len(times) - 1, -1, -1):
-        if series.get("ta", [None] * len(times))[i] is not None:
+        if ta[i] is not None:
             latest_idx = i
             break
     latest = {p: v[latest_idx] for p, v in series.items() if p != "t"}
     latest_time = times[latest_idx]
 
-    # 24-uurs min/max temperatuur uit de reeks
     temps = [v for v in series.get("ta", []) if v is not None]
     summary = {"tmin": min(temps), "tmax": max(temps)} if temps else {}
 
