@@ -14,6 +14,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
   :root {
     --bg: #0f1418; --paper: #171e24; --paper2: #1f2830;
@@ -61,6 +63,22 @@
   .now .value { font-weight: 300; font-size: clamp(60px, 11vw, 96px); letter-spacing: -0.02em; color: var(--temp); }
   .now .sub { color: var(--muted); margin-top: 8px; }
   @media (max-width: 640px) { .hero { grid-template-columns: 1fr; } .now { text-align: left; } }
+
+  /* buienradar-kaart */
+  #map { height: 440px; border-radius: 10px; overflow: hidden; background: var(--paper); }
+  @media (max-width: 640px) { #map { height: 340px; } }
+  .leaflet-container { font: inherit; }
+  .leaflet-tile-pane { filter: grayscale(1) invert(1) brightness(.85) contrast(.9) hue-rotate(180deg); }
+  .leaflet-control-attribution { background: rgba(15,20,24,.75) !important; color: var(--muted) !important; font-size: 10px !important; }
+  .leaflet-control-attribution a { color: var(--muted) !important; }
+  .leaflet-control-zoom a { background: var(--paper) !important; color: var(--ink) !important; border-color: var(--rule) !important; }
+  .mapbar { display: flex; align-items: center; gap: 12px; margin: 10px 0 0; }
+  .mapbar input[type=range] { flex: 1; accent-color: var(--temp); }
+  .mapbar .t { min-width: 5.5em; font-variant-numeric: tabular-nums; }
+  .mapbar .lbl { color: var(--muted); font-size: 13px; }
+  .legend { display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .legend span::before { content: ""; display: inline-block; width: 12px; height: 12px; border-radius: 2px; margin-right: 4px; vertical-align: -2px; background: var(--c); }
+  .locmark { width: 14px; height: 14px; border-radius: 50%; background: var(--temp); border: 2px solid #fff; box-shadow: 0 0 0 3px rgba(242,166,90,.35); }
 
   /* uurtabel */
   .tscroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -168,7 +186,8 @@
 <body>
 <main>
   <div class="status">
-    <b id="stname">Laden…</b>
+    <b id="locname">Laden…</b>
+    <span id="stinfo"></span>
     <span id="when"></span>
     <button class="alt" id="altbtn" type="button">ander station</button>
     <select class="station" id="station" aria-label="Kies een weerstation"></select>
@@ -181,26 +200,41 @@
   </div>
 
   <div class="tabs" role="tablist">
-    <button class="tab" role="tab" data-tab="nu" aria-selected="true">Nu</button>
+    <button class="tab" role="tab" data-tab="radar" aria-selected="true">Buienradar</button>
+    <button class="tab" role="tab" data-tab="nu" aria-selected="false">24H</button>
     <button class="tab" role="tab" data-tab="verwachting" aria-selected="false">Verwachting</button>
     <button class="tab" role="tab" data-tab="zon" aria-selected="false">Zon</button>
     <button class="tab" role="tab" data-tab="details" aria-selected="false">Details</button>
   </div>
 
-  <!-- NU -->
-  <section class="panel" id="panel-nu" role="tabpanel">
-    <div class="rain2">
-      <div class="block" id="radarBlock" style="margin-top:0;padding-top:0;border-top:0">
-        <h2>Buienradar · komende 2 uur<span id="radarWhen"></span></h2>
-        <div class="radarsum" id="radarSum">Radar laden…</div>
-        <svg id="radarChart" role="img" aria-label="Neerslag komende 2 uur volgens radar"></svg>
-      </div>
-      <div class="block" id="rain24Block" style="margin-top:0;padding-top:0;border-top:0">
-        <h2>Regen · komende 24 uur<span id="rain24When"></span></h2>
-        <div class="radarsum" id="rain24Sum">Verwachting laden…</div>
-        <svg id="rain24Chart" role="img" aria-label="Neerslag komende 24 uur volgens verwachting"></svg>
-      </div>
+  <!-- BUIENRADAR -->
+  <section class="panel" id="panel-radar" role="tabpanel">
+    <div class="radarsum" id="radarSum">Radar laden…</div>
+    <div id="map"></div>
+    <div class="mapbar">
+      <button class="btn" id="playBtn" type="button" aria-label="Afspelen of pauzeren">⏸</button>
+      <input type="range" id="frameSlider" min="0" max="24" value="0" aria-label="Tijdstip">
+      <span class="t" id="frameTime">–</span>
     </div>
+    <div class="legend"><span style="--c:#6cc0f5">licht</span><span style="--c:#2b7fd6">matig</span><span style="--c:#8a3fd6">zwaar</span><span style="--c:#e0413f">zeer zwaar</span><span class="lbl" id="radarWhen"></span></div>
+
+    <div class="block" id="radarBlock">
+      <h2>Komende 2 uur · buienradar<span id="radarLoc"></span></h2>
+      <svg id="radarChart" role="img" aria-label="Neerslag komende 2 uur volgens radar"></svg>
+    </div>
+    <div class="block" id="rain24Block">
+      <h2>Komende 24 uur · neerslag per uur<span id="rain24When"></span></h2>
+      <div class="radarsum" id="rain24Sum">Verwachting laden…</div>
+      <svg id="rain24Chart" role="img" aria-label="Neerslag komende 24 uur volgens verwachting"></svg>
+    </div>
+    <div class="block">
+      <h2>Komende 24 uur · regenkans<span>% per uur</span></h2>
+      <svg id="prob24Chart" role="img" aria-label="Regenkans komende 24 uur"></svg>
+    </div>
+  </section>
+
+  <!-- NU -->
+  <section class="panel" id="panel-nu" role="tabpanel" hidden>
     <div class="block">
       <h2>Komende 24 uur<span id="sunline"></span></h2>
       <div class="tscroll"><table class="hours" id="hourTable"><tr><td class="legend">Verwachting laden…</td></tr></table></div>
@@ -270,7 +304,7 @@
 
   <footer>
     Waarnemingen: <a href="https://dataplatform.knmi.nl/" rel="noopener">KNMI Data Platform</a>, ongevalideerde 10-minutenwaarnemingen.
-    Buienradar: KNMI radar-nowcast (pySTEPS), 5 minuten, 2 uur vooruit.
+    Buienradar: KNMI radar-nowcast (pySTEPS), 5 minuten, 2 uur vooruit; kaart © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap</a>-bijdragers.
     Verwachting: KNMI HARMONIE-AROME en ECMWF via <a href="https://open-meteo.com/" rel="noopener">Open-Meteo</a> (CC BY 4.0).
     Plaatsen via <a href="https://nominatim.openstreetmap.org/" rel="noopener">OpenStreetMap Nominatim</a>. Tijden in Nederlandse tijd.
   </footer>
@@ -411,6 +445,34 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
     if (o.marker != null) out += `<line x1="${x(o.marker)}" x2="${x(o.marker)}" y1="${y0}" y2="${y1}" stroke="var(--muted)" stroke-dasharray="2 3"/>`;
     svg.innerHTML = out;
   }
+  // regengrafiek in buienradar-stijl: vlak + verloop, banden licht/matig/zwaar (wortelschaal), "nu"-lijn
+  function rainChart(svg, vals, labels, opt) {
+    const W = narrow() ? 400 : 920, H = opt.height || (narrow() ? 170 : 200);
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    const pad = { l: 8, r: 64, t: 10, b: 24 }, x0 = pad.l, x1 = W - pad.r, y0 = pad.t, y1 = H - pad.b, n = vals.length;
+    const x = i => x0 + i / (n - 1) * (x1 - x0);
+    const top = Math.max(opt.min || 5, ...vals.map(v => v || 0)), sq = v => Math.sqrt(Math.max(0, v) / top), y = v => y1 - sq(v) * (y1 - y0);
+    const id = "g" + (svg.id || "r");
+    let out = `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8a3fd6"/><stop offset="${1 - sq(5)}" stop-color="#8a3fd6"/><stop offset="${1 - sq(1)}" stop-color="#2b7fd6"/><stop offset="1" stop-color="#6cc0f5"/></linearGradient></defs>`;
+    // banden
+    const bands = [[0.1, "licht"], [1, "matig"], [5, "zwaar"]].filter(b => b[0] <= top * 1.05);
+    for (const [v, l] of bands) out += `<line class="grid" x1="${x0}" x2="${x1}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke-dasharray="3 4"/><text class="axis" x="${x1 + 6}" y="${(y(v) + 4).toFixed(1)}">${l} ${num(v, 1)}</text>`;
+    out += `<text class="axis" x="${x1 + 6}" y="${y1 + 4}">mm/u</text>`;
+    for (const t of opt.ticks || []) out += `<line class="grid" x1="${x(t.i)}" x2="${x(t.i)}" y1="${y0}" y2="${y1}"/><text class="axis" x="${x(t.i)}" y="${y1 + 16}" text-anchor="middle">${t.label}</text>`;
+    out += `<line class="grid" x1="${x0}" x2="${x1}" y1="${y1}" y2="${y1}"/>`;
+    if (opt.bars) {
+      const bw = (x1 - x0) / n * 0.7;
+      vals.forEach((v, i) => { if (v > 0) out += `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${y(v).toFixed(1)}" width="${bw.toFixed(1)}" height="${(y1 - y(v)).toFixed(1)}" fill="url(#${id})" rx="2"/>`; });
+    } else {
+      let d = `M${x(0)} ${y1}`; vals.forEach((v, i) => { d += ` L${x(i).toFixed(1)} ${y(v || 0).toFixed(1)}`; }); d += ` L${x(n - 1)} ${y1} Z`;
+      out += `<path d="${d}" fill="url(#${id})" opacity=".85"/>`;
+      let l = ""; vals.forEach((v, i) => { l += (l ? "L" : "M") + x(i).toFixed(1) + " " + y(v || 0).toFixed(1); });
+      out += `<path d="${l}" fill="none" stroke="#bfe1ff" stroke-width="1.5"/>`;
+    }
+    if (opt.marker != null) out += `<line x1="${x(opt.marker)}" x2="${x(opt.marker)}" y1="${y0}" y2="${y1}" stroke="var(--ink)" stroke-dasharray="3 3"/><text class="axis" x="${x(opt.marker) + 4}" y="${y0 + 10}">nu</text>`;
+    if (opt.note) out += `<text class="axis" x="${x0 + 4}" y="${y0 + 10}">${opt.note}</text>`;
+    svg.innerHTML = out;
+  }
   function block(container, id, title, sub) {
     const d = document.createElement("div"); d.className = "block";
     d.innerHTML = `<h2>${title}<span>${sub || ""}</span></h2><svg id="${id}" role="img" aria-label="${title}"></svg>`;
@@ -427,40 +489,54 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
     try { const r = await fetch(src + "?" + Date.now(), { cache: "no-store" }); if (!r.ok) throw new Error(src + " (" + r.status + ")"); data = await r.json(); break; }
     catch (e) { lastErr = e; }
   }
-  if (!data) { $("stname").textContent = ""; $("error").hidden = false; $("error").textContent = "De waarnemingen konden niet worden geladen: " + lastErr.message + "."; return; }
+  if (!data) { $("locname").textContent = ""; $("error").hidden = false; $("error").textContent = "De waarnemingen konden niet worden geladen: " + lastErr.message + "."; return; }
   const stations = data.stations.filter(s => s.latest && s.series);
-  let radar = null;
+  let radar = null, grid = null;
   for (const src of DATA_SOURCES.map(u => u.replace("data.json", "radar.json"))) {
     try { const r = await fetch(src + "?" + Date.now(), { cache: "no-store" }); if (r.ok) { radar = await r.json(); break; } } catch (e) {}
   }
+  for (const src of DATA_SOURCES.map(u => u.replace("data.json", "radar-grid.json"))) {
+    try { const r = await fetch(src + "?" + Date.now(), { cache: "no-store" }); if (r.ok) { grid = await r.json(); break; } } catch (e) {}
+  }
+  // Locatie is leidend: verwachting, zon en buienradar gelden voor de plek; waarnemingen van het dichtstbijzijnde station.
+  const DEFAULT_LOC = { lat: 52.392, lon: 4.607, name: "Overveen" };
+  let loc = { ...DEFAULT_LOC };
+  const hashLoc = /^#(-?[\d.]+),(-?[\d.]+),(.+)$/.exec(decodeURIComponent(location.hash));
+  if (hashLoc) loc = { lat: +hashLoc[1], lon: +hashLoc[2], name: hashLoc[3] };
 
   const sel = $("station");
   for (const s of stations) { const o = document.createElement("option"); o.value = s.id; o.textContent = cleanName(s.name); sel.appendChild(o); }
-  const fromHash = location.hash.slice(1);
-  sel.value = stations.some(s => s.id === fromHash) ? fromHash : stations[0].id;
-  sel.addEventListener("change", () => { history.replaceState(null, "", "#" + sel.value); note(""); sel.classList.remove("open"); render(); });
+  sel.addEventListener("change", () => { note(""); sel.classList.remove("open"); render(); });
   $("altbtn").addEventListener("click", () => { sel.classList.toggle("open"); if (sel.classList.contains("open")) sel.focus(); });
   let rt; window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(render, 150); });
 
   // tabs
-  let tab = "nu";
+  let tab = "radar";
   document.querySelectorAll(".tab").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
   function showTab(t) {
     tab = t;
     document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === t));
     document.querySelectorAll(".panel").forEach(p => p.hidden = p.id !== "panel-" + t);
+    if (t === "radar" && map) setTimeout(() => map.invalidateSize(), 50);
   }
 
   // ---- locatie ---------------------------------------------------------------
   const hav = (a, b, c, d) => { const R = 6371, r = Math.PI / 180, x = (c - a) * r, y = (d - b) * r; const h = Math.sin(x / 2) ** 2 + Math.cos(a * r) * Math.cos(c * r) * Math.sin(y / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
-  function nearest(lat, lon, label) {
+  function nearestStation(lat, lon) {
     let best = null;
-    for (const s of stations) { if (s.lat == null) continue; const d = hav(lat, lon, s.lat, s.lon); if (!best || d < best.d) best = { s, d }; }
-    if (!best) return;
-    sel.value = best.s.id; history.replaceState(null, "", "#" + best.s.id); render();
-    $("locnote").className = "locnote ok";
-    $("locnote").textContent = `${label}: dichtstbijzijnde station is ${cleanName(best.s.name)}, ${Math.round(best.d)} km`;
+    for (const s of stations) { if (s.lat == null || s.latest.ta == null) continue; const d = hav(lat, lon, s.lat, s.lon); if (!best || d < best.d) best = { s, d }; }
+    return best;
   }
+  function nearest(lat, lon, label) {
+    const best = nearestStation(lat, lon); if (!best) return;
+    loc = { lat, lon, name: label };
+    history.replaceState(null, "", "#" + lat.toFixed(4) + "," + lon.toFixed(4) + "," + encodeURIComponent(label));
+    sel.value = best.s.id; render();
+    $("locnote").className = "locnote ok";
+    $("locnote").textContent = `${label}: waarnemingen van ${cleanName(best.s.name)}, ${Math.round(best.d)} km`;
+  }
+  // startpositie: dichtstbijzijnde station bij de (standaard)locatie
+  { const b = nearestStation(loc.lat, loc.lon); sel.value = b ? b.s.id : stations[0].id; }
   async function zoek() {
     const q = $("q").value.trim(); if (!q) return;
     note("Zoeken…");
@@ -474,7 +550,7 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
       const r = d.results?.[0]; if (r) hit = { lat: r.latitude, lon: r.longitude, name: r.name + (r.admin1 ? ", " + r.admin1 : "") };
     } catch (e) {}
     if (!hit) { note("Niets gevonden voor “" + q + "”."); return; }
-    nearest(hit.lat, hit.lon, hit.name);
+    nearest(hit.lat, hit.lon, hit.name.split(",")[0].trim());
   }
   $("zoek").addEventListener("click", zoek);
   $("q").addEventListener("keydown", e => { if (e.key === "Enter") zoek(); });
@@ -484,7 +560,8 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
   function render() {
     const s = stations.find(x => x.id === sel.value);
     const t = new Date(s.latest_time), ageMin = (Date.now() - t) / 60000;
-    $("stname").textContent = cleanName(s.name);
+    $("locname").textContent = loc.name;
+    $("stinfo").textContent = `station ${cleanName(s.name)} (${Math.round(hav(loc.lat, loc.lon, s.lat, s.lon))} km) ·`;
     $("when").textContent = `laatst bijgewerkt ${fmtDay.format(t)}, ${fmtTime.format(t)} uur` + (ageMin > 60 ? ` (${Math.round(ageMin / 60)} uur oud)` : "");
     $("when").classList.toggle("stale", ageMin > 60);
 
@@ -606,8 +683,7 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
   $("sunStep").addEventListener("click", () => { sunDaily = !sunDaily; $("sunStep").textContent = sunDaily ? "per week tonen" : "per dag tonen"; renderSun(stations.find(x => x.id === sel.value)); });
 
   function renderSun(s) {
-    if (s.lat == null) { $("sunBig").textContent = "–"; $("sunBigSub").textContent = "Geen coördinaten voor dit station"; return; }
-    const lat = s.lat, lon = s.lon, now = new Date(), today = dateStr(now);
+    const lat = loc.lat, lon = loc.lon, now = new Date(), today = dateStr(now);
     const T = sunTimes(today, lat, lon);
     const tomorrow = dateStr(new Date(localMidnight(today).getTime() + 36 * 3600000));
     const T1 = sunTimes(tomorrow, lat, lon);
@@ -810,33 +886,80 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
     } catch (e) { $("skillSum").textContent = "Vergelijking niet beschikbaar: " + e.message; }
   }
 
-  // ---- BUIENRADAR (nowcast per station) --------------------------------------
+  // ---- BUIENRADAR: raster (locatie) + kaart --------------------------------------
+  const RADAR_TH = 0.1;
+  let frameBytes = null, frameUrls = [], curFrame = 0, playing = true, timer = null, map = null, overlay = null, marker = null;
+  function decodeFrames() {
+    if (!grid || frameBytes) return;
+    frameBytes = grid.frames.map(b64 => Uint8Array.from(atob(b64), c => c.charCodeAt(0)));
+  }
+  function gridSeries(lat, lon) {   // 25 waarden mm/u voor een plek, of null buiten het raster
+    if (!grid) return null; decodeFrames();
+    const r = Math.floor((grid.lat1 - lat) / grid.dlat), c = Math.floor((lon - grid.lon0) / grid.dlon);
+    if (r < 0 || r >= grid.nlat || c < 0 || c >= grid.nlon) return null;
+    return frameBytes.map(f => f[r * grid.nlon + c] / grid.scale);
+  }
+  function radarColor(v) {   // mm/u -> [r,g,b,a]
+    if (v < RADAR_TH) return [0, 0, 0, 0];
+    if (v < 0.5) return [108, 192, 245, 120]; if (v < 1) return [108, 192, 245, 170]; if (v < 2.5) return [43, 127, 214, 200];
+    if (v < 5) return [43, 127, 214, 235]; if (v < 10) return [138, 63, 214, 240]; return [224, 65, 63, 245];
+  }
+  function frameUrl(k) {
+    if (frameUrls[k]) return frameUrls[k];
+    const cv = document.createElement("canvas"); cv.width = grid.nlon; cv.height = grid.nlat;
+    const ctx = cv.getContext("2d"), img = ctx.createImageData(grid.nlon, grid.nlat), f = frameBytes[k];
+    for (let i = 0; i < f.length; i++) { const [r, g, b, a] = radarColor(f[i] / grid.scale); img.data[i * 4] = r; img.data[i * 4 + 1] = g; img.data[i * 4 + 2] = b; img.data[i * 4 + 3] = a; }
+    ctx.putImageData(img, 0, 0);
+    return frameUrls[k] = cv.toDataURL();
+  }
+  function showFrame(k) {
+    curFrame = k; $("frameSlider").value = k;
+    if (overlay) overlay.setUrl(frameUrl(k));
+    const t = new Date(grid.times[k]);
+    $("frameTime").textContent = (k === 0 ? "nu " : "+" + (k * 5) + " min ") + fmtTime.format(t);
+  }
+  function setPlaying(on) { playing = on; $("playBtn").textContent = on ? "⏸" : "▶"; clearInterval(timer); if (on) timer = setInterval(() => showFrame((curFrame + 1) % grid.times.length), 450); }
+  function initMap() {
+    if (map || !window.L) return;
+    map = L.map("map", { zoomControl: true, attributionControl: true }).setView([loc.lat, loc.lon], 8);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 12, attribution: "© OpenStreetMap" }).addTo(map);
+    if (grid) { decodeFrames(); overlay = L.imageOverlay(frameUrl(0), [[grid.lat0, grid.lon0], [grid.lat1 + grid.dlat, grid.lon1 + grid.dlon]], { opacity: .8, interactive: false }).addTo(map); }
+    marker = L.marker([loc.lat, loc.lon], { icon: L.divIcon({ className: "", html: '<div class="locmark"></div>', iconSize: [14, 14], iconAnchor: [7, 7] }), interactive: false }).addTo(map);
+    $("frameSlider").max = grid ? grid.times.length - 1 : 0;
+    $("frameSlider").addEventListener("input", e => { setPlaying(false); showFrame(+e.target.value); });
+    $("playBtn").addEventListener("click", () => setPlaying(!playing));
+    if (grid) { showFrame(0); setPlaying(true); }
+  }
   function renderRadar(s) {
-    const box = $("radarBlock"), svg = $("radarChart");
-    const v = radar && radar.stations && radar.stations[s.id];
-    if (!radar || !radar.times || !radar.times.length || !v || !v.some(x => x != null)) {
+    const svg = $("radarChart");
+    initMap();
+    if (marker) marker.setLatLng([loc.lat, loc.lon]);
+    if (map) map.panTo([loc.lat, loc.lon]);
+    // buienlijn: raster op de locatie, anders stationswaarden
+    let v = gridSeries(loc.lat, loc.lon), times = grid ? grid.times.map(t => new Date(t)) : null, bron = "op je locatie";
+    if (!v && radar && radar.stations && radar.stations[s.id]) { v = radar.stations[s.id]; times = radar.times.map(t => new Date(t)); bron = "bij " + cleanName(s.name); }
+    $("radarLoc").textContent = bron;
+    if (!v || !times || !times.length || !v.some(x => x != null)) {
       $("radarWhen").textContent = "";
-      $("radarSum").innerHTML = radar && radar.error ? `Radar niet beschikbaar<small>${radar.error}</small>` : "Geen radargegevens voor dit station";
+      $("radarSum").innerHTML = radar && radar.error ? `Radar niet beschikbaar<small>${radar.error}</small>` : "Geen radargegevens beschikbaar";
       svg.innerHTML = ""; return;
     }
-    const times = radar.times.map(t => new Date(t));
     const age = (Date.now() - times[0]) / 60000;
     $("radarWhen").textContent = `radarbeeld ${fmtTime.format(times[0])}` + (age > 20 ? ` (${Math.round(age)} min oud)` : "");
-    const TH = 0.1;   // mm/u: onder deze grens noemen we het droog
     const now = v[0] ?? 0, max = Math.max(...v.map(x => x ?? 0));
     let head, sub;
-    if (now < TH) {
-      const i = v.findIndex(x => x != null && x >= TH);
-      if (i < 0) head = "Komende 2 uur droog", sub = "Geen neerslag op de radar binnen bereik";
-      else { const j = v.findIndex((x, k) => k > i && (x == null || x < TH)); head = `Droog, regen verwacht om ${fmtTime.format(times[i])}`; sub = `${num(max)} mm/u op het hoogst` + (j > 0 ? `, weer droog rond ${fmtTime.format(times[j])}` : ""); }
+    if (now < RADAR_TH) {
+      const i = v.findIndex(x => x != null && x >= RADAR_TH);
+      if (i < 0) head = `Droog in ${loc.name}, ook de komende 2 uur`, sub = "Geen neerslag op de radar binnen bereik";
+      else { const j = v.findIndex((x, k) => k > i && (x == null || x < RADAR_TH)); head = `Droog in ${loc.name}, regen verwacht om ${fmtTime.format(times[i])}`; sub = `${num(max)} mm/u op het hoogst` + (j > 0 ? `, weer droog rond ${fmtTime.format(times[j])}` : ""); }
     } else {
-      const j = v.findIndex(x => x == null || x < TH);
-      head = `Nu ${num(now)} mm/u` + (now >= 10 ? " (zware regen)" : now >= 2 ? " (regen)" : " (lichte regen)");
+      const j = v.findIndex(x => x == null || x < RADAR_TH);
+      head = `Nu ${num(now)} mm/u in ${loc.name}` + (now >= 10 ? " (zware regen)" : now >= 2 ? " (regen)" : " (lichte regen)");
       sub = j > 0 ? `Droog vanaf ongeveer ${fmtTime.format(times[j])}` : "Regen houdt de komende 2 uur aan";
     }
     $("radarSum").innerHTML = `${head}<small>${sub}</small>`;
-    const ticks = []; times.forEach((t, i) => { if (t.getUTCMinutes() % 30 === 0) ticks.push({ i, label: fmtTime.format(t) }); });
-    chart(svg, v.length, { ticks, half: true, height: narrow() ? 130 : 150, bars: { v: v.map(x => x ?? 0), color: "var(--rain)", unit: " mm/u", min: 1 } });
+    const step = narrow() ? 30 : 15, ticks = []; times.forEach((t, i) => { if (t.getUTCMinutes() % step === 0) ticks.push({ i, label: fmtTime.format(t) }); });
+    rainChart(svg, v.map(x => x ?? 0), null, { ticks, min: 2, note: `radar ${fmtTime.format(times[0])}, 5-minutenstappen` });
   }
 
   // regen komende 24 uur uit de verwachting (zelfde venster als de uurtabel)
@@ -855,8 +978,9 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
     else { head = `${num(tot)} mm verwacht, vanaf ${lbl(first)}`; sub = `hoogste regenkans ${maxK}%`; }
     $("rain24When").textContent = `${lbl(0)} – ${lbl(idx.length - 1)}`;
     $("rain24Sum").innerHTML = `${head}<small>${sub}</small>`;
-    const ticks = idx.map((_, i) => i).filter(i => (+H.time[idx[i]].slice(11, 13)) % 6 === 0).map(i => ({ i, label: lbl(i) }));
-    chart(svg, idx.length, { ticks, half: true, height: narrow() ? 130 : 150, bars: { v: mm, color: "var(--rain)", unit: " mm", min: 1 } });
+    const ticks = idx.map((_, i) => i).filter(i => (+H.time[idx[i]].slice(11, 13)) % (narrow() ? 6 : 3) === 0).map(i => ({ i, label: lbl(i) }));
+    rainChart(svg, mm, null, { ticks, bars: true, min: 2, note: "mm per uur, verwachting" });
+    chart($("prob24Chart"), idx.length, { ticks, height: narrow() ? 120 : 140, area: { v: kans, color: "var(--rain)", max: 100, labelMax: "100%" } });
   }
 
   // ---- VERWACHTING -----------------------------------------------------------
@@ -873,9 +997,8 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
   }
   async function renderForecast(s) {
     $("days").innerHTML = ""; $("dayhead").innerHTML = ""; $("fcCharts").innerHTML = ""; $("fcnote").textContent = "Verwachting laden…";
-    if (s.lat == null) { $("fcnote").textContent = "Geen coördinaten voor dit station."; return; }
     try {
-      const f = await forecast(s.lat, s.lon);
+      const f = await forecast(loc.lat, loc.lon);
       if (sel.value !== s.id) return;
       fcData = f; fcDay = Math.min(fcDay, f.daily.time.length - 1);
       const D = f.daily;
