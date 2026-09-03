@@ -9,6 +9,7 @@ Env:  KNMI_API_KEY   (Open Data API-key; dezelfde key als voor de EDR API werkt
                       voor de Open Data API en zet die als KNMI_OPEN_DATA_KEY,
                       anders wordt KNMI_API_KEY geprobeerd)
 """
+import base64
 import json
 import os
 import re
@@ -26,6 +27,9 @@ DATASET, VERSION = "radar_forecast", "2.0"
 API = f"https://api.dataplatform.knmi.nl/open-data/v1/datasets/{DATASET}/versions/{VERSION}/files"
 SITE = Path(__file__).parent / "site"
 DATA, OUT = SITE / "data.json", SITE / "radar.json"
+GRID_OUT = SITE / "radar-grid.json"
+# Raster voor de kaart: regelmatig lat/lon-rooster over Nederland (~2,5 km)
+GRID = {"lat0": 50.70, "lat1": 53.60, "lon0": 3.20, "lon1": 7.30, "dlat": 0.0225, "dlon": 0.036}
 
 
 def key():
@@ -124,9 +128,32 @@ def main():
         n_img = len([k for k in f.keys() if k.startswith("image")])
         times, values = [], {s["id"]: [] for s in stations}
         rc = {s["id"]: to_rc(s["lat"], s["lon"]) if s.get("lat") is not None else None for s in stations}
+        # rooster voor de kaart: rij/kolom van elk roostercelmidden in het KNMI-beeld
+        lats = np.arange(GRID["lat1"], GRID["lat0"], -GRID["dlat"])   # noord -> zuid (beeldvolgorde)
+        lons = np.arange(GRID["lon0"], GRID["lon1"], GRID["dlon"])
+        LON, LAT = np.meshgrid(lons, lats)
+        geo = f["geographic"]
+        proj = Proj(attr(f["geographic/map_projection"], "projection_proj4_params"))
+        corners = np.array(attr(geo, "geo_product_corners"), dtype=float).reshape(4, 2)
+        cx, cy = proj(corners[:, 0], corners[:, 1])
+        gx, gy = proj(LON, LAT)
+        frames = []
+
         for k in range(1, n_img + 1):
             data, a, b, missing, out, valid = read_image(f, k)
             times.append((valid or base + timedelta(minutes=5 * (k - 1))).strftime("%Y-%m-%dT%H:%M:%SZ"))
+            # frame: mm/uur * 10 als byte (0-255), buiten beeld/missing = 0
+            gcol = ((gx - cx.min()) / (cx.max() - cx.min()) * data.shape[1]).astype(int)
+            grow = ((cy.max() - gy) / (cy.max() - cy.min()) * data.shape[0]).astype(int)
+            inside = (grow >= 0) & (grow < data.shape[0]) & (gcol >= 0) & (gcol < data.shape[1])
+            pv = np.zeros(gx.shape, dtype=np.float64)
+            pv[inside] = data[grow[inside], gcol[inside]].astype(np.float64)
+            bad = ~inside
+            if missing is not None: bad |= (pv == missing)
+            if out is not None: bad |= (pv == out)
+            mmh = np.clip((a * pv + b) * 12.0, 0, 25.5)
+            mmh[bad] = 0
+            frames.append(base64.b64encode(np.round(mmh * 10).astype(np.uint8).tobytes()).decode("ascii"))
             for sid, pos in rc.items():
                 if pos is None or not (0 <= pos[0] < data.shape[0] and 0 <= pos[1] < data.shape[1]):
                     values[sid].append(None)
@@ -137,6 +164,15 @@ def main():
                 else:
                     mm5 = a * float(pv) + b          # neerslagsom per 5 minuten (mm)
                     values[sid].append(round(max(0.0, mm5) * 12, 2))  # -> mm/uur
+
+    GRID_OUT.write_text(json.dumps({
+        "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source": "KNMI radar_forecast 2.0 (radar + pySTEPS nowcast), hersampled naar lat/lon-rooster",
+        "lat0": float(lats[-1]), "lat1": float(lats[0]), "lon0": float(lons[0]), "lon1": float(lons[-1]),
+        "nlat": int(len(lats)), "nlon": int(len(lons)), "dlat": GRID["dlat"], "dlon": GRID["dlon"],
+        "scale": 10, "unit": "mm/h", "times": times, "frames": frames,
+    }, separators=(",", ":")))
+    print(f"radar-grid.json geschreven: {len(lats)}x{len(lons)} cellen, {len(frames)} frames")
 
     OUT.write_text(json.dumps({
         "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -155,4 +191,13 @@ if __name__ == "__main__":
     except Exception as e:  # nooit de hele run laten falen op de radar
         print("radar overgeslagen:", repr(e), file=sys.stderr)
         if not OUT.exists():
-            OUT.write_text(json.dumps({"error": str(e), "times": [], "stations": {}}))
+            GRID_OUT.write_text(json.dumps({
+        "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source": "KNMI radar_forecast 2.0 (radar + pySTEPS nowcast), hersampled naar lat/lon-rooster",
+        "lat0": float(lats[-1]), "lat1": float(lats[0]), "lon0": float(lons[0]), "lon1": float(lons[-1]),
+        "nlat": int(len(lats)), "nlon": int(len(lons)), "dlat": GRID["dlat"], "dlon": GRID["dlon"],
+        "scale": 10, "unit": "mm/h", "times": times, "frames": frames,
+    }, separators=(",", ":")))
+    print(f"radar-grid.json geschreven: {len(lats)}x{len(lons)} cellen, {len(frames)} frames")
+
+    OUT.write_text(json.dumps({"error": str(e), "times": [], "stations": {}}))
