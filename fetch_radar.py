@@ -191,13 +191,4 @@ if __name__ == "__main__":
     except Exception as e:  # nooit de hele run laten falen op de radar
         print("radar overgeslagen:", repr(e), file=sys.stderr)
         if not OUT.exists():
-            GRID_OUT.write_text(json.dumps({
-        "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "source": "KNMI radar_forecast 2.0 (radar + pySTEPS nowcast), hersampled naar lat/lon-rooster",
-        "lat0": float(lats[-1]), "lat1": float(lats[0]), "lon0": float(lons[0]), "lon1": float(lons[-1]),
-        "nlat": int(len(lats)), "nlon": int(len(lons)), "dlat": GRID["dlat"], "dlon": GRID["dlon"],
-        "scale": 10, "unit": "mm/h", "times": times, "frames": frames,
-    }, separators=(",", ":")))
-    print(f"radar-grid.json geschreven: {len(lats)}x{len(lons)} cellen, {len(frames)} frames")
-
-    OUT.write_text(json.dumps({"error": str(e), "times": [], "stations": {}}))
+            OUT.write_text(json.dumps({"error": str(e), "times": [], "stations": {}}))
