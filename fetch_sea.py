@@ -129,6 +129,9 @@ def build(base):
     locs, per_loc = catalogus(base)
     picked = pick_locations(locs, per_loc)
     print(f"{base}: {len(locs)} locaties in catalogus; gevonden: " + ", ".join(f"{k} (golven={bool(v['waves'])}, getij={bool(v['tide'])})" for k, v in picked.items()))
+    sample = next((v["waves"] or v["tide"] for v in picked.values() if v["waves"] or v["tide"]), None)
+    if sample:
+        print("  voorbeeld locatie-record:", {k: sample[k] for k in list(sample)[:12]})
     if not picked:
         raise RuntimeError("geen gewenste locaties gevonden")
     result = []
@@ -141,7 +144,7 @@ def build(base):
             w = {}
             for g, k in (("Hm0", "hm0"), ("Tm02", "tm02"), ("Th0", "th0")):
                 try:
-                    w[k] = series(base, e["waves"], g, now - timedelta(hours=HOURS_BACK), now, "measurement" if base == NEW else None)
+                    w[k] = series(base, e["waves"], g, now - timedelta(hours=HOURS_BACK), now, "meting" if base == NEW else None)
                 except Exception as ex:
                     print(f"  {key} {g}: {ex}", file=sys.stderr)
             if w.get("hm0", {}).get("t"):
@@ -149,24 +152,25 @@ def build(base):
         if e["tide"]:
             item["tide_name"] = e["tide"].get("Naam")
             try:
-                obs = series(base, e["tide"], "WATHTE", now - timedelta(hours=HOURS_BACK), now, "measurement" if base == NEW else None)
+                obs = series(base, e["tide"], "WATHTE", now - timedelta(hours=HOURS_BACK), now, "meting" if base == NEW else None)
             except Exception as ex:
                 obs = {"t": [], "v": []}; print(f"  {key} WATHTE meting: {ex}", file=sys.stderr)
             fc = {"t": [], "v": []}
-            for g, p in (("WATHTE", "forecast"), ("WATHTBRKD", None)):   # nieuw: forecast-procestype; oud: astronomisch getij
+            # nieuw: astronomisch getij (altijd 48 u vooruit), anders weersafhankelijke verwachting; oud: WATHTBRKD
+            for g, p in ((("WATHTE", "astronomisch"), ("WATHTE", "verwachting")) if base == NEW else (("WATHTBRKD", None),)):
                 try:
-                    fc = series(base, e["tide"], g, now - timedelta(minutes=10), now + timedelta(hours=HOURS_FWD), p if base == NEW else None)
+                    fc = series(base, e["tide"], g, now - timedelta(minutes=10), now + timedelta(hours=HOURS_FWD), p)
                     if fc["t"]:
                         break
                 except Exception as ex:
-                    print(f"  {key} {g} voorspelling: {ex}", file=sys.stderr)
+                    print(f"  {key} {g} {p or ''}: {ex}", file=sys.stderr)
             allt = obs["t"] + [x for x in fc["t"] if x > (obs["t"][-1] if obs["t"] else "")]
             allv = obs["v"] + [fc["v"][i] for i, x in enumerate(fc["t"]) if x > (obs["t"][-1] if obs["t"] else "")]
             if allt:
                 item["tide"] = {"obs": obs, "fc": fc, "extremes": extremes(allt, allv)}
         if e["temp"]:
             try:
-                item["temp"] = series(base, e["temp"], "T", now - timedelta(hours=HOURS_BACK), now, "measurement" if base == NEW else None)
+                item["temp"] = series(base, e["temp"], "T", now - timedelta(hours=HOURS_BACK), now, "meting" if base == NEW else None)
             except Exception as ex:
                 print(f"  {key} T: {ex}", file=sys.stderr)
         result.append(item)
@@ -176,8 +180,13 @@ def build(base):
 def latlon(l):
     """Nieuwe API geeft lat/lon (EPSG:4258); oude geeft UTM31 -> globaal omrekenen met pyproj als aanwezig."""
     try:
+        for la, lo in (("Lat", "Lon"), ("Latitude", "Longitude"), ("lat", "lon"), ("Y", "X")):
+            if l.get(la) is not None and l.get(lo) is not None and abs(float(l[la])) <= 90 and abs(float(l[lo])) <= 180:
+                return float(l[la]), float(l[lo])
+        if l.get("Geometrie") and isinstance(l["Geometrie"], dict) and l["Geometrie"].get("coordinates"):
+            c = l["Geometrie"]["coordinates"]; return float(c[1]), float(c[0])
         cs = str(l.get("Coordinatenstelsel", ""))
-        if cs in ("4258", "4326") or (abs(float(l["X"])) < 180 and abs(float(l["Y"])) < 90):
+        if cs in ("4258", "4326"):
             return float(l["Y"]), float(l["X"])
         from pyproj import Transformer
         lon, lat = Transformer.from_crs("EPSG:25831", "EPSG:4326", always_xy=True).transform(float(l["X"]), float(l["Y"]))
