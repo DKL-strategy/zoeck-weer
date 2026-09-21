@@ -160,7 +160,21 @@ def load_previous():
 def main():
     previous = load_previous()
 
-    index = station_index()
+    try:
+        index = station_index()
+    except Exception as e:
+        # KNMI even niet bereikbaar (403/5xx): vorige data laten staan en de run niet laten falen
+        print(f"stationslijst niet opgehaald ({e}); vorige data.json blijft staan", file=sys.stderr)
+        if previous:
+            OUT.parent.mkdir(parents=True, exist_ok=True)
+            OUT.write_text(json.dumps({
+                "generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "source": "KNMI Data Platform, EDR API, " + COLLECTION + " (vorige run, KNMI tijdelijk niet bereikbaar)",
+                "hours": HOURS,
+                "stations": list(previous.values()),
+            }, ensure_ascii=False, separators=(",", ":")))
+            return
+        raise
     ids = select_stations(index)
 
     def one(sid):
