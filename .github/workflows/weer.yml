@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["site/**", "fetch_weather.py", "fetch_radar.py", ".github/workflows/weer.yml"]
+    paths: ["site/**", "fetch_weather.py", "fetch_radar.py", "fetch_sea.py", ".github/workflows/weer.yml"]
 
 permissions:
   contents: write            # nodig om de data-branch te schrijven
@@ -42,11 +42,14 @@ jobs:
           KNMI_OPEN_DATA_KEY: ${{ secrets.KNMI_OPEN_DATA_KEY }}
         run: python fetch_radar.py
 
+      - name: Golven en getij ophalen bij Rijkswaterstaat
+        run: python fetch_sea.py
+
       # Data naar de branch "data": één commit die telkens wordt overschreven (geen groeiende geschiedenis).
       # De pagina leest data.json/radar.json/radar-grid.json via raw.githubusercontent.com.
       - name: Data publiceren naar branch "data"
         run: |
-          mkdir -p /tmp/data && cp site/data.json site/radar.json site/radar-grid.json /tmp/data/ 2>/dev/null || true
+          mkdir -p /tmp/data && cp site/data.json site/radar.json site/radar-grid.json site/sea.json /tmp/data/ 2>/dev/null || true
           cd /tmp/data
           git init -q -b data
           git config user.name "weer-bot"
