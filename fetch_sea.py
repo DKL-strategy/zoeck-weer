@@ -21,7 +21,9 @@ OUT = Path(__file__).parent / "site" / "sea.json"
 NEW = "https://ddapi20-waterwebservices.rijkswaterstaat.nl"
 OLD = "https://waterwebservices.rijkswaterstaat.nl"
 HEADERS = {"Content-Type": "application/json", "X-API-KEY": "zoeck-weer"}
-WANTED = ["scheveningen", "ijmuiden", "europlatform", "euro platform"]   # substring in naam of code
+# Doelplekken (strand): per grootheid wordt het dichtstbijzijnde meetpunt gezocht dat nu data levert
+TARGETS = {"scheveningen": ("Scheveningen", 52.105, 4.270), "ijmuiden": ("IJmuiden", 52.465, 4.555)}
+MAX_KM = 60
 HOURS_BACK, HOURS_FWD = 24, 48
 
 
@@ -56,23 +58,26 @@ def catalogus(base):
     return locs, per_loc
 
 
-def pick_locations(locs, per_loc):
-    """Per gewenste plaats: het meetpunt met golfdata en het meetpunt met waterhoogte (kunnen verschillen)."""
-    out = {}
+def hav(lat1, lon1, lat2, lon2):
+    import math
+    R = 6371.0; p = math.pi / 180
+    a = math.sin((lat2 - lat1) * p / 2) ** 2 + math.cos(lat1 * p) * math.cos(lat2 * p) * math.sin((lon2 - lon1) * p / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def candidates(locs, per_loc, grootheid, lat, lon):
+    """Locaties met deze grootheid, gesorteerd op afstand tot (lat, lon), binnen MAX_KM."""
+    out = []
     for lid, l in locs.items():
-        name = (l.get("Naam") or "").lower(); code = (l.get("Code") or "").lower()
-        key = next((w for w in WANTED if w in name or w in code), None)
-        if not key:
+        if ("OW", grootheid) not in per_loc.get(lid, set()):
             continue
-        key = "europlatform" if key.startswith("euro") else key
-        g = per_loc.get(lid, set())
-        entry = out.setdefault(key, {"waves": None, "tide": None, "temp": None})
-        if ("OW", "Hm0") in g and not entry["waves"]:
-            entry["waves"] = l
-        if ("OW", "WATHTE") in g and not entry["tide"]:
-            entry["tide"] = l
-        if ("OW", "T") in g and not entry["temp"]:
-            entry["temp"] = l
+        la, lo = latlon(l)
+        if la is None:
+            continue
+        d = hav(lat, lon, la, lo)
+        if d <= MAX_KM:
+            out.append((d, l))
+    out.sort(key=lambda x: x[0])
     return out
 
 
@@ -124,56 +129,68 @@ def extremes(t, v, min_gap_h=4):
     return clean
 
 
+def has_recent(ser, hours=3):
+    if not ser or not ser["t"]:
+        return False
+    last = datetime.fromisoformat(ser["t"][-1].replace("Z", "+00:00"))
+    return datetime.now(timezone.utc) - last <= timedelta(hours=hours) and len(ser["t"]) >= 3
+
+
 def build(base):
     now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
     locs, per_loc = catalogus(base)
-    picked = pick_locations(locs, per_loc)
-    print(f"{base}: {len(locs)} locaties in catalogus; gevonden: " + ", ".join(f"{k} (golven={bool(v['waves'])}, getij={bool(v['tide'])})" for k, v in picked.items()))
-    sample = next((v["waves"] or v["tide"] for v in picked.values() if v["waves"] or v["tide"]), None)
-    if sample:
-        print("  voorbeeld locatie-record:", {k: sample[k] for k in list(sample)[:12]})
-    if not picked:
-        raise RuntimeError("geen gewenste locaties gevonden")
+    print(f"{base}: {len(locs)} locaties in catalogus")
+    proces = "meting" if base == NEW else None
     result = []
-    for key, e in picked.items():
-        item = {"key": key, "name": key.capitalize(), "waves": None, "tide": None, "temp": None}
-        ref = e["waves"] or e["tide"]
-        item["lat"], item["lon"] = latlon(ref)
-        if e["waves"]:
-            item["waves_name"] = e["waves"].get("Naam")
-            w = {}
-            for g, k in (("Hm0", "hm0"), ("Tm02", "tm02"), ("Th0", "th0")):
-                try:
-                    w[k] = series(base, e["waves"], g, now - timedelta(hours=HOURS_BACK), now, "meting" if base == NEW else None)
-                except Exception as ex:
-                    print(f"  {key} {g}: {ex}", file=sys.stderr)
-            if w.get("hm0", {}).get("t"):
-                item["waves"] = w
-        if e["tide"]:
-            item["tide_name"] = e["tide"].get("Naam")
+    for key, (name, lat, lon) in TARGETS.items():
+        item = {"key": key, "name": name, "lat": lat, "lon": lon, "waves": None, "tide": None, "temp": None}
+        # golven: eerste meetpunt (op afstand) met recente Hm0
+        for d, l in candidates(locs, per_loc, "Hm0", lat, lon)[:6]:
             try:
-                obs = series(base, e["tide"], "WATHTE", now - timedelta(hours=HOURS_BACK), now, "meting" if base == NEW else None)
+                hm0 = series(base, l, "Hm0", now - timedelta(hours=HOURS_BACK), now, proces)
             except Exception as ex:
-                obs = {"t": [], "v": []}; print(f"  {key} WATHTE meting: {ex}", file=sys.stderr)
+                print(f"  {key} golven {l.get('Naam')}: {ex}", file=sys.stderr); continue
+            if has_recent(hm0):
+                w = {"hm0": hm0}
+                for g, k in (("Tm02", "tm02"), ("Th0", "th0")):
+                    try: w[k] = series(base, l, g, now - timedelta(hours=HOURS_BACK), now, proces)
+                    except Exception as ex: print(f"  {key} {g} {l.get('Naam')}: {ex}", file=sys.stderr)
+                item["waves"] = w; item["waves_name"] = l.get("Naam"); item["waves_km"] = round(d, 1)
+                break
+            print(f"  {key} golven: {l.get('Naam')} ({d:.0f} km) geen recente data")
+        # getij: dichtstbijzijnde waterhoogte met recente meting; voorspelling astronomisch, anders verwachting
+        for d, l in candidates(locs, per_loc, "WATHTE", lat, lon)[:6]:
+            try:
+                obs = series(base, l, "WATHTE", now - timedelta(hours=HOURS_BACK), now, proces)
+            except Exception as ex:
+                print(f"  {key} getij {l.get('Naam')}: {ex}", file=sys.stderr); continue
+            if not has_recent(obs):
+                print(f"  {key} getij: {l.get('Naam')} ({d:.0f} km) geen recente data"); continue
             fc = {"t": [], "v": []}
-            # nieuw: astronomisch getij (altijd 48 u vooruit), anders weersafhankelijke verwachting; oud: WATHTBRKD
             for g, p in ((("WATHTE", "astronomisch"), ("WATHTE", "verwachting")) if base == NEW else (("WATHTBRKD", None),)):
                 try:
-                    fc = series(base, e["tide"], g, now - timedelta(minutes=10), now + timedelta(hours=HOURS_FWD), p)
-                    if fc["t"]:
-                        break
+                    fc = series(base, l, g, now - timedelta(minutes=10), now + timedelta(hours=HOURS_FWD), p)
+                    if fc["t"]: break
                 except Exception as ex:
-                    print(f"  {key} {g} {p or ''}: {ex}", file=sys.stderr)
-            allt = obs["t"] + [x for x in fc["t"] if x > (obs["t"][-1] if obs["t"] else "")]
-            allv = obs["v"] + [fc["v"][i] for i, x in enumerate(fc["t"]) if x > (obs["t"][-1] if obs["t"] else "")]
-            if allt:
-                item["tide"] = {"obs": obs, "fc": fc, "extremes": extremes(allt, allv)}
-        if e["temp"]:
+                    print(f"  {key} {g} {p or ''} {l.get('Naam')}: {ex}", file=sys.stderr)
+            last_obs = obs["t"][-1]
+            allt = obs["t"] + [x for x in fc["t"] if x > last_obs]
+            allv = obs["v"] + [fc["v"][i] for i, x in enumerate(fc["t"]) if x > last_obs]
+            item["tide"] = {"obs": obs, "fc": fc, "extremes": extremes(allt, allv)}
+            item["tide_name"] = l.get("Naam"); item["tide_km"] = round(d, 1)
+            break
+        # watertemperatuur
+        for d, l in candidates(locs, per_loc, "T", lat, lon)[:6]:
             try:
-                item["temp"] = series(base, e["temp"], "T", now - timedelta(hours=HOURS_BACK), now, "meting" if base == NEW else None)
+                t = series(base, l, "T", now - timedelta(hours=HOURS_BACK), now, proces)
             except Exception as ex:
-                print(f"  {key} T: {ex}", file=sys.stderr)
+                print(f"  {key} T {l.get('Naam')}: {ex}", file=sys.stderr); continue
+            if has_recent(t, hours=6):
+                item["temp"] = t; item["temp_name"] = l.get("Naam"); item["temp_km"] = round(d, 1); break
+        print(f"  {key}: golven={item.get('waves_name')} ({item.get('waves_km')} km), getij={item.get('tide_name')} ({item.get('tide_km')} km), temp={item.get('temp_name')} ({item.get('temp_km')} km)")
         result.append(item)
+    if not any(i["waves"] or i["tide"] for i in result):
+        raise RuntimeError("geen enkel meetpunt met data")
     return result
 
 
